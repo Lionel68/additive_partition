@@ -1,0 +1,192 @@
+---
+title: "Simulating additive partitions"
+author: "Lionel"
+date: "January 12, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(reshape2)
+library(ggplot2)
+library(dplyr)
+library(arm)
+set.seed(20161202)
+```
+
+## Motivation
+
+Past work in the Jena experiment revealed consistent positive effect of plant richness on herbivory rates (Meyer in prep). The mechanisms driving this pattern still remain to be discovered. Classical additive partitioning approach (Loreau and Hector) allow to disentangle selection from complementarity effects of plant richness on plant productivity. This approach need to be adapted to be applied to other ecosystem functions measured on individual plant species, such as herbivory. Here we use two different partitioning approach, one that was developped for investiguating grasshopper feeding response in experimental conditions (Unsicker et al) and one that we developped.
+
+## The Equations
+
+We define:
+
+ * $Bmix_{ij}$ : Leaf biomass of species i in mixture j
+ * $Hmix_{ij}$ : Herbivory rates of species i in mixture j
+ * $Bmono_{i}$ : Leaf biomass of species i in monoculture
+ * $Hmono_{i}$ : Herbivory rates of species i in monoculture 
+ * $N$ : Number of sown plant species in a mixture
+
+### First partition, Unsicker method
+
+The rationale for the first partition is that it is expected that the amount of plant biomass consumed in the mixtures is the amount consumed in the monoculture divided by the plant richness.
+
+$$ NE_{j} = \sum_{i=1}^{N} Bmix_{ij} * Hmix_{ij} - \sum_{i=1}^{N} \frac{Bmono_{ij} * Hmono_{ij}}{N} $$
+
+Re-arranging the equation gives the following two equations for the complementarity and selection effect:
+
+$$ CE_{j} = N * mean(\frac{Bmix_{ij} * Hmix_{ij}}{Bmono_{ij} * Hmono_{ij}} - \frac{1}{N}) * mean(Bmono_{ij} * Hmono_{ij}) $$
+$$ SE_{j} = N * cov(\frac{Bmix_{ij} * Hmix_{ij}}{Bmono_{ij} * Hmono_{ij}} - \frac{1}{N}, Bmono_{ij} * Hmono_{ij}) $$
+
+### Second partition, Our method
+
+The rationale for the second partition is that herbivory rates at the plant species level is independent from plant richness, herbivory rates in the mixtures are expected to be equal to herbivory rates in the monocultures.
+
+Which gives the following equations:
+
+$$ NE_{j} = \sum_{i=1}^{N} Bmix_{ij} * Hmix_{ij} - \sum_{i=1}^{N} Bmix_{ij} * Hmono_{ij} $$
+
+Re-arranging the equation gives the following two equations for the complementarity and selection effect:
+
+$$ CE_{j} = N * mean(Hmix_{ij} - Hmono_{ij}) * mean(Bmix_{ij}) $$
+$$ SE_{j} = N * cov(Hmix_{ij} - Hmono_{ij}, Bmix_{ij}) $$
+
+## Simulation
+
+In the following we will simulate data to look if the partitions are able to detect selection and complementarity effect on herbivory independently from changes in plant biomass.
+
+```{r sim1, tidy=TRUE}
+#simulate a dataset with linear variation of H and B in all possible combination
+#with complementarity effects
+
+#first we set up a data frame giving all possible combination between
+#plant biomass/herbivory and plant richness
+dirc<-expand.grid(dH=c("neg","nul","pos"),dB=c("neg","nul","pos"))
+dirc$SlpH<-c(-0.0015,0,0.0015,-0.0015,0,0.0015,-0.0015,0,0.0015)#slopes of herbivory vs richness
+dirc$SlpB<-rep(c(-4,0,4),each=3)#slopes of biomass vs richness
+#next we set species-specific intercepts
+sp_int<-data.frame(Sp=letters[1:8],HInt=rnorm(8,0.015,0.001),BInt=rnorm(8,40,1),stringsAsFactors = FALSE)
+rownames(sp_int)<-sp_int$Sp
+#simdat is a diversity gradients made of 32 plots and with richness going from 1 to 4
+simdat<-data.frame(Plot=paste0("P",1:32),Rich=rep(1:4,each=8))
+#simdat2 is a diversity gradient but with one row for each species in each plot
+simdat2<-data.frame(Plot=rep(simdat$Plot,times=simdat$Rich),Rich=rep(simdat$Rich,times=simdat$Rich),Species="",stringsAsFactors = FALSE)
+for(i in 1:32){
+  simdat2$Species[simdat2$Plot==simdat[i,"Plot"]]<-sample(letters[1:8],simdat[i,"Rich"],replace=FALSE)
+}
+simdat2[1:8,"Species"]<-letters[1:8]#ensure that all species have a monoculture
+#now generate the biomass and herbivory values for each 9 scenarios
+for(i in 1:9){
+  simdat2$H<-sp_int[simdat2$Species,"HInt"]+dirc[i,"SlpH"]*(simdat2$Rich-1)
+  simdat2$B<-sp_int[simdat2$Species,"BInt"]+dirc[i,"SlpB"]*(simdat2$Rich-1)
+  y<-dim(simdat2)[2]
+  names(simdat2)[c((y-1),y)]<-paste0(c("H","B"),dirc[i,"dH"],dirc[i,"dB"])
+}
+#some data formatting to get into a long format
+simH<-melt(simdat2,id.vars=c(1:3),measure.vars=seq(4,21,2),value.name="Herbi",variable.name="Sim")
+simB<-melt(simdat2,id.vars=c(1:3),measure.vars=seq(5,21,2),value.name="B",variable.name="Sim")
+sima<-cbind(simB,simH[,5])
+names(sima)[6]<-"H"
+sima$VarH<-factor(rep(rep(c("Herbivory negative","Herbivory constant","Herbivory positive"),each=80),3),levels=c("Herbivory negative","Herbivory constant","Herbivory positive"))
+sima$VarB<-factor(rep(c("Biomass negative","Biomass constant","Biomass positive"),each=240),levels=c("Biomass negative","Biomass constant","Biomass positive"))
+#look at the situation simulated
+ggplot(sima,aes(x=Rich,y=B))+geom_point()+stat_smooth(method="lm",se=FALSE)+facet_grid(VarH~VarB)+labs(x="Plant richness",y="Plant species biomass")
+ggplot(sima,aes(x=Rich,y=H))+geom_point()+stat_smooth(method="lm",se=FALSE)+facet_grid(VarH~VarB)+labs(x="Plant richness",y="Plant species herbivory rates")
+
+
+#re-arrange for computation of the partitions
+hmono<-melt(subset(simdat2,Rich==1),id.vars=c(1:3),measure.vars = seq(4,21,2),value.name = "Herbi_Mono",variable.name = "Sim")
+hmix<-melt(subset(simdat2,Rich!=1),id.vars=c(1:3),measure.vars = seq(4,21,2),value.name="Herbi_Mix",variable.name = "Sim")
+hmix<-merge(hmix,hmono[,-c(1,2)],by=c("Species","Sim"))
+bmono<-melt(subset(simdat2,Rich==1),id.vars=c(1:3),measure.vars = seq(5,21,2),value.name = "B_Mono",variable.name = "Sim")
+bmix<-melt(subset(simdat2,Rich!=1),id.vars=c(1:3),measure.vars = seq(5,21,2),value.name="B_Mix",variable.name = "Sim")
+bmix<-merge(bmix,bmono[,-c(1,2)],by=c("Species","Sim"))
+simdat3<-cbind(bmix,hmix[,5:6])
+#now compute the different partition, following Sybille and My approach
+#important note: R use an unbiased version of the covariance, dividing by n-1 instead of n
+#this explains why we need to use these n-1 terms in the selection effects
+simdat3%>%
+  mutate(VarH=paste0("H",substr(Sim,2,4)),VarB=paste0("B",substr(Sim,5,8)))%>%
+  group_by(Plot,Sim,Rich,VarH,VarB)%>%
+  mutate(CBM_Mix=B_Mix*Herbi_Mix,CBM_Mono=B_Mono*Herbi_Mono,dRC=(CBM_Mix/CBM_Mono)-(1/Rich),dH=Herbi_Mix-Herbi_Mono)%>%
+  summarise(NE_1=sum(CBM_Mix)-sum(B_Mix*Herbi_Mono),NE_2=sum(CBM_Mix)-sum(CBM_Mono/Rich),CE_1=n()*mean(dH)*mean(B_Mix),CE_2=n()*mean(dRC)*mean(CBM_Mono),SE_1=(n()-1)*cov(dH,B_Mix),SE_2=(n()-1)*cov(dRC,CBM_Mono))->sim_dd
+
+ggplot(sim_dd,aes(x=Rich,y=NE_1))+geom_point()+stat_smooth(method="lm",se=FALSE)+facet_grid(VarH~VarB,scales="free")+labs(x="Plant richness",y="Net diversity effect method Lionel")
+ggplot(sim_dd,aes(x=Rich,y=NE_2))+geom_point()+stat_smooth(method="lm",se=FALSE)+facet_grid(VarH~VarB,scales="free")+labs(x="Plant richness",y="Net diversity effect method Sybille")
+ggplot(sim_dd,aes(x=Rich,y=CE_1))+geom_point()+stat_smooth(method="lm",se=FALSE)+facet_grid(VarH~VarB,scales="free")+labs(x="Plant richness",y="Complementarity effect method Lionel")
+ggplot(sim_dd,aes(x=Rich,y=CE_2))+geom_point()+stat_smooth(method="lm",se=FALSE)+facet_grid(VarH~VarB,scales="free")+labs(x="Plant richness",y="Complementarity effect method Sybille")
+ggplot(sim_dd,aes(x=Rich,y=SE_1))+geom_point()+stat_smooth(method="lm",se=FALSE)+facet_grid(VarH~VarB,scales="free")+labs(x="Plant richness",y="Selection effect method Lionel")
+ggplot(sim_dd,aes(x=Rich,y=SE_2))+geom_point()+stat_smooth(method="lm",se=FALSE)+facet_grid(VarH~VarB,scales="free")+labs(x="Plant richness",y="Selection effect method Sybille")
+```
+
+The method we developped is qualitatively unaffected by changes in plant biomass, the direction of the herbivory changes (negative, null or positive) are driving the direction of complementarity and net diversity effects. Note the very small values of the selection effect in this particular simulation.
+
+In a next step we simulate strong selection effects, there each species had a different slope between biomass/herbivory and plant richness. These slopes were determined by the species intercept and could be either increasing with higher intercept values (positive selection, bigger plants grow bigger), stay constant (no selection) or decrease (negative selection, bigger plants grow smaller).
+
+```{r sim2, tidy=TRUE}
+#now with selection effects 
+#again set a dataframe with the 9 scenarios of biomass and herbivory changes
+dirc<-expand.grid(dH=c("neg","nul","pos"),dB=c("neg","nul","pos"))
+dirc$SlpH<-c(-0.3,0,0.3,-0.3,0,0.3,-0.3,0,0.3)
+dirc$SlpB<-rep(c(-0.3,0,0.3),each=3)
+#params to compute the regression lines
+sp_int<-data.frame(Sp=letters[1:8],BInt=seq(30,100,10),stringsAsFactors = FALSE)
+#here we assume positive correlation between biomass and herbivory at the species levels
+#big plants have high herbivory
+sp_int$HInt<-(sp_int$BInt-65)*(0.01)
+rownames(sp_int)<-sp_int$Sp
+#a simulated diversity gradient
+simdat<-data.frame(Plot=paste0("P",1:32),Rich=rep(1:4,each=8))
+simdat2<-data.frame(Plot=rep(simdat$Plot,times=simdat$Rich),Rich=rep(simdat$Rich,times=simdat$Rich),Species="",stringsAsFactors = FALSE)
+for(i in 1:32){
+  simdat2$Species[simdat2$Plot==simdat[i,"Plot"]]<-sample(letters[1:8],simdat[i,"Rich"],replace=FALSE)
+}
+simdat2[1:8,"Species"]<-letters[1:8]
+#fill the simulated diversity gradient with biomass/hebrivory values
+for(i in 1:9){
+  simdat2$H<-invlogit(sp_int[simdat2$Species,"HInt"]+(sp_int[simdat2$Species,"HInt"]*dirc[i,"SlpH"])*(simdat2$Rich-1))
+  simdat2$B<-sp_int[simdat2$Species,"BInt"]+((sp_int[simdat2$Species,"BInt"]-65)*dirc[i,"SlpB"])*(simdat2$Rich-1)
+  y<-dim(simdat2)[2]
+  names(simdat2)[c((y-1),y)]<-paste0(c("H","B"),dirc[i,"dH"],dirc[i,"dB"])
+}
+#look at the situation simulated
+simH<-melt(simdat2,id.vars=c(1:3),measure.vars=seq(4,21,2),value.name="Herbi",variable.name="Sim")
+simB<-melt(simdat2,id.vars=c(1:3),measure.vars=seq(5,21,2),value.name="B",variable.name="Sim")
+sima<-cbind(simB,simH[,5])
+names(sima)[6]<-"H"
+sima$VarH<-factor(rep(rep(c("Herbivory negative","Herbivory constant","Herbivory positive"),each=80),3),levels=c("Herbivory negative","Herbivory constant","Herbivory positive"))
+sima$VarB<-factor(rep(c("Biomass negative","Biomass constant","Biomass positive"),each=240),levels=c("Biomass negative","Biomass constant","Biomass positive"))
+
+
+ggplot(sima,aes(x=Rich,y=B,color=Species))+geom_point()+stat_smooth(method="lm",se=FALSE)+facet_grid(VarH~VarB)+labs(x="Plant richness",y="Plant species biomass")
+ggplot(sima,aes(x=Rich,y=H,color=Species))+geom_point()+stat_smooth(method="lm",se=FALSE)+facet_grid(VarH~VarB)+labs(x="Plant richness",y="Plant species herbivory rates")+theme(text=element_text(size=25),legend.position="none")
+
+
+#re-arrange for computation of the partitions
+hmono<-melt(subset(simdat2,Rich==1),id.vars=c(1:3),measure.vars = seq(4,21,2),value.name = "Herbi_Mono",variable.name = "Sim")
+hmix<-melt(subset(simdat2,Rich!=1),id.vars=c(1:3),measure.vars = seq(4,21,2),value.name="Herbi_Mix",variable.name = "Sim")
+hmix<-merge(hmix,hmono[,-c(1,2)],by=c("Species","Sim"))
+bmono<-melt(subset(simdat2,Rich==1),id.vars=c(1:3),measure.vars = seq(5,21,2),value.name = "B_Mono",variable.name = "Sim")
+bmix<-melt(subset(simdat2,Rich!=1),id.vars=c(1:3),measure.vars = seq(5,21,2),value.name="B_Mix",variable.name = "Sim")
+bmix<-merge(bmix,bmono[,-c(1,2)],by=c("Species","Sim"))
+simdat3<-cbind(bmix,hmix[,5:6])
+#now compute the different partition, following Sybille and My approach
+simdat3%>%
+  mutate(VarH=paste0("H",substr(Sim,2,4)),VarB=paste0("B",substr(Sim,5,8)))%>%
+  group_by(Plot,Sim,Rich,VarH,VarB)%>%
+  mutate(CBM_Mix=B_Mix*Herbi_Mix,CBM_Mono=B_Mono*Herbi_Mono,dRC=(CBM_Mix/CBM_Mono)-(1/Rich),dH=Herbi_Mix-Herbi_Mono)%>%
+  summarise(NE_1=sum(CBM_Mix)-sum(B_Mix*Herbi_Mono),NE_2=sum(CBM_Mix)-sum(CBM_Mono/Rich),CE_1=n()*mean(dH)*mean(B_Mix),CE_2=n()*mean(dRC)*mean(CBM_Mono),SE_1=(n()-1)*cov(dH,B_Mix),SE_2=(n()-1)*cov(dRC,CBM_Mono))->sim_dd
+
+sim_dd$VarH<-factor(rep(c("Herbivory negative","Herbivory constant","Herbivory positive"),times=216/3),levels=c("Herbivory negative","Herbivory constant","Herbivory positive"))
+sim_dd$VarB<-factor(rep(rep(c("Biomass negative","Biomass constant","Biomass positive"),each=3),times=216/9),levels=c("Biomass negative","Biomass constant","Biomass positive"))
+
+
+ggplot(sim_dd,aes(x=Rich,y=NE_1))+geom_point()+stat_smooth(method="lm",se=FALSE)+facet_grid(VarH~VarB,scales="free")+labs(x="Plant richness",y="Net diversity effect method Lionel")
+ggplot(sim_dd,aes(x=Rich,y=NE_2))+geom_point()+stat_smooth(method="lm",se=FALSE)+facet_grid(VarH~VarB,scales="free")+labs(x="Plant richness",y="Net diversity effect method Sybille")
+ggplot(sim_dd,aes(x=Rich,y=CE_1))+geom_point()+stat_smooth(method="lm",se=FALSE)+facet_grid(VarH~VarB,scales="free")+labs(x="Plant richness",y="Complementarity effect method Lionel")
+ggplot(sim_dd,aes(x=Rich,y=CE_2))+geom_point()+stat_smooth(method="lm",se=FALSE)+facet_grid(VarH~VarB,scales="free")+labs(x="Plant richness",y="Complementarity effect method Sybille")
+ggplot(sim_dd,aes(x=Rich,y=SE_1))+geom_point()+stat_smooth(method="lm",se=FALSE)+facet_grid(VarH~VarB,scales="free")+labs(x="Plant richness",y="Selection effect method Lionel")
+ggplot(sim_dd,aes(x=Rich,y=SE_2))+geom_point()+stat_smooth(method="lm",se=FALSE)+facet_grid(VarH~VarB,scales="free")+labs(x="Plant richness",y="Selection effect method Sybille")
+```
+
+Again the sign of the selection effect depend only on the herbivory rates in the approach we developped. While in Unsicker approach it was depending on plant biomass. The issue there is that this relation seems to depend on the biomass-herbivory relation, if we change the positive correlation between monoculture biomass and monoculture herbivory results look different.
